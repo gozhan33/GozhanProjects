@@ -53,6 +53,17 @@ namespace KeyValueStore
             await fsStore.DeleteAsync(partition, key);
             deleted = await fsStore.GetAsync(partition, key);
             Debug.Assert(deleted == null, "Delete failed");
+
+            var absProvider = new AzureBlobProvider("DefaultEndpointsProtocol=https;AccountName=gozhanstore;AccountKey=C3zPz5N4xxxyyyzzz;EndpointSuffix=core.windows.net", "gozhantestcontainer");
+            var absStore = new PartitionedKeyValueStore(absProvider);
+
+            await absStore.SetAsync(partition, key, value);
+            result = await absStore.GetAsync(partition, key);
+            Debug.Assert(result == value, "Set/Get failed");
+
+            await absStore.DeleteAsync(partition, key);
+            deleted = await absStore.GetAsync(partition, key);
+            Debug.Assert(deleted == null, "Delete failed");
         }
     }
 }
