@@ -54,7 +54,21 @@ namespace KeyValueStore
             deleted = await fsStore.GetAsync(partition, key);
             Debug.Assert(deleted == null, "Delete failed");
 
-            var absProvider = new AzureBlobProvider("DefaultEndpointsProtocol=https;AccountName=gozhanstore;AccountKey=C3zPz5N4xxxyyyzzz;EndpointSuffix=core.windows.net", "gozhantestcontainer");
+            // NOTE: Set your Azure Blob Storage API key here or via environment variable
+            var absApiKey = Environment.GetEnvironmentVariable("AZURE_BLOB_STORAGE_API_KEY") ?? "AZURE_BLOB_STORAGE_API_KEY";
+            if (absApiKey == "AZURE_BLOB_STORAGE_API_KEY")
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine("WARNING: Azure Blob Storage API key is not set. Please set the AZURE_BLOB_STORAGE_API_KEY environment variable.");
+                Console.ResetColor();
+                // Throw an exception to prevent accidental use in production
+                throw new InvalidOperationException("Azure Blob Storage API key is not set. Set the AZURE_BLOB_STORAGE_API_KEY environment variable.");
+            }
+            else
+            {
+                Console.WriteLine("Using OpenAI API Key: " + absApiKey.Substring(0, 10) + "****");
+            }
+            var absProvider = new AzureBlobProvider("DefaultEndpointsProtocol=https;AccountName=gozhanstore;AccountKey=" + absApiKey, "gozhantestcontainer");
             var absStore = new PartitionedKeyValueStore(absProvider);
 
             await absStore.SetAsync(partition, key, value);
