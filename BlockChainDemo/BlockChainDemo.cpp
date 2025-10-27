@@ -373,21 +373,6 @@ public:
         swap(*this, other);
     }
 
-	/*
-	// Move assignment
-	Block& operator=(Block&& other) noexcept {
-		if (this != &other) {
-			std::scoped_lock lock(hashMutex, other.hashMutex);
-			previousHash = std::move(other.previousHash);
-			transactions = std::move(other.transactions);
-			timestamp = other.timestamp;
-			nonce = other.nonce;
-			hash = std::move(other.hash);
-		}
-		return *this;
-	}
-		*/
-
 	std::string calculateHash() const {
 		std::shared_lock lock(hashMutex);
 		std::string txData;
