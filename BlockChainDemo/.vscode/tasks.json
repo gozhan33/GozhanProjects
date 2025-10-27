@@ -1,0 +1,27 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build BlockChainDemo (MSVC)",
+            "type": "shell",
+            "command": "cl.exe /nologo  /Zi /Od /EHsc /std:c++17 /MTd /I\"C:\\Program Files\\OpenSSL-Win64\\include\" BlockChainDemo.cpp /link /DEBUG /LIBPATH:\"C:\\Program Files\\OpenSSL-Win64\\lib\\VC\\x64\\MTd\" libcrypto.lib libssl.lib",
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "shell": {
+                    "executable": "cmd.exe",
+                    "args": ["/d", "/c"]
+                }
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true
+            },
+            "problemMatcher": "$msCompile"
+        }
+    ]
+}
