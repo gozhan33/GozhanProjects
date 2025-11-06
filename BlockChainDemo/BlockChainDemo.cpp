@@ -11,6 +11,11 @@
 #include <shared_mutex>
 #include <atomic>
 
+/**
+ * @brief Computes SHA-256 hash of input string and returns it as a hexadecimal string
+ * @param input The string to hash
+ * @return Hexadecimal string representation of the SHA-256 hash
+ */
 std::string sha256str(const std::string& input) {
     unsigned char hash[SHA256_DIGEST_LENGTH];
     SHA256(reinterpret_cast<const unsigned char*>(input.c_str()), input.size(), hash);
@@ -22,26 +27,42 @@ std::string sha256str(const std::string& input) {
     return ss.str();
 }
 
-
+/**
+ * @brief Computes SHA-256 hash of input data and returns raw bytes
+ * @param data The string to hash
+ * @return Vector containing the raw SHA-256 hash bytes
+ */
 std::vector<unsigned char> sha256(const std::string& data) {
     std::vector<unsigned char> hash(SHA256_DIGEST_LENGTH);
     SHA256(reinterpret_cast<const unsigned char*>(data.c_str()), data.size(), hash.data());
     return hash;
 }
 
+/**
+ * @brief Generates a new RSA key pair for cryptographic operations
+ * @details Creates a 2048-bit RSA key pair using the RSA_F4 (65537) exponent
+ * @return Pointer to newly allocated RSA structure, or nullptr on failure
+ * @note Caller is responsible for freeing the returned RSA pointer
+ */
 RSA* generate_keypair() {
     RSA* rsa = RSA_new();
     BIGNUM* bn = BN_new();
-    BN_set_word(bn, RSA_F4); // RSA_F4 = 65537
+    BN_set_word(bn, RSA_F4); // RSA_F4 = 65537 (standard RSA exponent)
     if (RSA_generate_key_ex(rsa, 2048, bn, nullptr) != 1) {
-		RSA_free(rsa);
-		BN_free(bn);
-		return nullptr;
-	}
+        RSA_free(rsa);
+        BN_free(bn);
+        return nullptr;
+    }
     BN_free(bn);
     return rsa;
 }
 
+/**
+ * @brief Signs a payload using RSA-SHA256
+ * @param rsa RSA key pair to use for signing
+ * @param payload Data to sign
+ * @return Vector containing the signature bytes
+ */
 std::vector<unsigned char> sign_payload(RSA* rsa, const std::string& payload) {
     std::vector<unsigned char> hash = sha256(payload);
     std::vector<unsigned char> signature(RSA_size(rsa));
@@ -51,11 +72,25 @@ std::vector<unsigned char> sign_payload(RSA* rsa, const std::string& payload) {
     return signature;
 }
 
+/**
+ * @brief Verifies an RSA signature using SHA-256
+ * @param rsa The RSA public key for verification
+ * @param payload The original message that was signed
+ * @param signature The signature to verify
+ * @return true if signature is valid, false otherwise
+ * @note Uses SHA-256 as the message digest algorithm
+ */
 bool verify_signature(RSA* rsa, const std::string& payload, const std::vector<unsigned char>& signature) {
     std::vector<unsigned char> hash = sha256(payload);
     return RSA_verify(NID_sha256, hash.data(), hash.size(), signature.data(), signature.size(), rsa);
 }
 
+/**
+ * @brief Converts a byte array to its hexadecimal string representation
+ * @param data The byte array to convert
+ * @return Hexadecimal string where each byte is represented by two characters
+ * @details Each byte is formatted as exactly two hexadecimal digits with leading zeros
+ */
 std::string to_hex(const std::vector<unsigned char>& data) {
     std::ostringstream oss;
     for (unsigned char byte : data)
@@ -63,6 +98,14 @@ std::string to_hex(const std::vector<unsigned char>& data) {
     return oss.str();
 }
 
+/**
+ * @brief Extracts an RSA key in hexadecimal format
+ * @param pkey The EVP_PKEY structure containing the key
+ * @param is_private true to extract private key, false for public key
+ * @return Hexadecimal string representation of the key in PEM format
+ * @details Converts the key to PEM format first, then to hex. For private keys,
+ *          outputs unencrypted PEM (no password protection)
+ */
 std::string extract_key_hex(EVP_PKEY* pkey, bool is_private) {
     BIO* bio = BIO_new(BIO_s_mem());
     if (is_private)
@@ -79,7 +122,12 @@ std::string extract_key_hex(EVP_PKEY* pkey, bool is_private) {
     return to_hex(bytes);
 }
 
-// Helper to print OpenSSL error if needed
+/**
+ * @brief Prints OpenSSL error queue to stderr
+ * @details Iterates through all errors in OpenSSL's error queue,
+ *          printing each one with a descriptive message.
+ *          The error queue is emptied after printing.
+ */
 void print_openssl_error() {
     unsigned long err = ERR_get_error();
     while (err) {
@@ -90,7 +138,13 @@ void print_openssl_error() {
     }
 }
 
-// decode hex (assumes even length, no spaces)
+/**
+ * @brief Converts a hexadecimal string to bytes
+ * @param hex The hexadecimal string to convert
+ * @return Vector of bytes represented by the hex string
+ * @details Assumes hex string has even length and no spaces.
+ *          Each pair of hex characters represents one byte.
+ */
 std::vector<unsigned char> hex_to_bytes(const std::string& hex) {
     std::vector<unsigned char> out;
     out.reserve(hex.size()/2);
@@ -102,8 +156,18 @@ std::vector<unsigned char> hex_to_bytes(const std::string& hex) {
     return out;
 }
 
+/**
+ * @brief Loads an RSA public key from either hex or PEM format
+ * @param input_hex_or_pem The key data in either hex-encoded or PEM format
+ * @return Pointer to RSA structure containing the public key, or nullptr on error
+ * @details Supports multiple formats:
+ *          - Hex-encoded PEM
+ *          - Direct PEM format (begins with '-')
+ *          - Hex-encoded DER in SPKI format
+ *          - Hex-encoded DER in PKCS#1 format
+ * @note Caller is responsible for freeing the returned RSA pointer using RSA_free
+ */
 RSA* load_public_key_from_hex_or_pem(const std::string& input_hex_or_pem) {
-    // quick hex decoder omitted for brevity; assume hex_to_bytes() exists
     bool looks_like_pem = !input_hex_or_pem.empty() && input_hex_or_pem.front() == '-';
     std::vector<unsigned char> bytes;
 
@@ -170,9 +234,24 @@ RSA* load_public_key_from_hex_or_pem(const std::string& input_hex_or_pem) {
     return rsa;
 }
 
+/**
+ * @brief Represents a transaction in the blockchain
+ * 
+ * A Transaction represents a transfer of value between two addresses in the blockchain.
+ * Each transaction contains the sender's address (fromAddress), recipient's address (toAddress),
+ * and the amount being transferred. Transactions are cryptographically signed to ensure
+ * authenticity and are immutable once added to the blockchain.
+ */
 struct Transaction
 {
 public:
+    /**
+     * @brief Constructs a new transaction
+     * @param from The sender's address (public key in hex format)
+     * @param to The recipient's address (public key in hex format)
+     * @param amt The amount to transfer
+     * @note The transaction is not valid until signed by the sender
+     */
     Transaction(const std::string& from, const std::string& to, double amt)
         : fromAddress(from), toAddress(to), amount(amt) {
             hashTX = calculateHash();
@@ -216,31 +295,61 @@ public:
     // Move assignment handled by copy-and-swap idiom
     // No need for separate move assignment operator!
 	
-	// Simple accessors for immutable data
+    /**
+     * @brief Gets the sender's address
+     * @return The sender's public key in hex format
+     * @thread_safety Thread-safe, accesses immutable data
+     */
 	std::string getFromAddress() const { 
 		return fromAddress; 
 	}
 
+    /**
+     * @brief Gets the recipient's address
+     * @return The recipient's public key in hex format
+     * @thread_safety Thread-safe, accesses immutable data
+     */
 	std::string getToAddress() const { 
 		return toAddress; 
 	}
 
+    /**
+     * @brief Gets the transaction amount
+     * @return The amount being transferred
+     * @thread_safety Thread-safe, accesses immutable data
+     */
 	double getAmount() const { 
 		return amount; 
 	}
 	
-	// This function calculates the SHA-256 hash of the transaction
+    /**
+     * @brief Calculates the unique hash for this transaction
+     * @return SHA-256 hash of transaction data as hex string
+     * @thread_safety Thread-safe, uses only immutable data
+     */
 	std::string calculateHash() const
 	{
 		return sha256str(fromAddress + toAddress + std::to_string(amount));
 	}
 
+    /**
+     * @brief Gets the transaction signature in hexadecimal format
+     * @return Hex string representation of the signature
+     * @thread_safety Thread-safe, uses shared lock
+     */
 	std::string getSignatureHex() const
 	{
 		std::shared_lock lock(signatureMutex);
 		return to_hex(signature);
 	}
 
+    /**
+     * @brief Signs the transaction with the sender's private key
+     * @param privateKey RSA private key for signing
+     * @thread_safety Thread-safe, uses appropriate locks
+     * @details Creates a SHA-256 hash of the transaction data and signs it
+     *          using the provided RSA private key
+     */
 	void signTransaction(RSA* privateKey)
 	{
     	// 1) compute hash off-lock as these members are only updated in the constructor
@@ -272,6 +381,13 @@ public:
 	}
 	
 
+    /**
+     * @brief Verifies the transaction's validity
+     * @return true if the transaction is valid, false otherwise
+     * @details Validates the transaction signature using the sender's public key.
+     *          Mining reward transactions (empty fromAddress) are always valid.
+     * @thread_safety Thread-safe
+     */
 	bool isValid() const
 	{
 		if (fromAddress.empty()) {
@@ -285,16 +401,27 @@ public:
 		return checkIfValid;
 	}
 
-
 private:
+    /// Sender's public key in hex format
 	std::string fromAddress;
+    /// Recipient's public key in hex format
 	std::string toAddress;
+    /// Amount to transfer
 	double amount;
-	std::string hashTX; // Hash of the transaction
-	std::vector<unsigned char> signature;  // Sign the hash of the transaction using the sender's private key
+    /// SHA-256 hash of the transaction data
+	std::string hashTX;
+    /// RSA signature of the transaction hash
+	std::vector<unsigned char> signature;
+    /// Mutex for thread-safe access to signature
 	mutable std::shared_mutex signatureMutex;
 
-
+    /**
+     * @brief Internal method to verify transaction signature
+     * @param publicKey RSA public key for signature verification
+     * @return true if signature is valid, false otherwise
+     * @thread_safety Thread-safe, uses shared lock for signature access
+     * @note Assumes ownership of publicKey is managed by caller
+     */
 	bool isValid(RSA* publicKey) const
 	{
 		if (!publicKey) {
@@ -373,6 +500,11 @@ public:
         swap(*this, other);
     }
 
+    /**
+     * @brief Calculates the hash of the block using current nonce
+     * @return SHA-256 hash of the block's contents
+     * @thread_safety Thread-safe, uses shared lock
+     */
 	std::string calculateHash() const {
 		std::shared_lock lock(hashMutex);
 		std::string txData;
@@ -382,6 +514,12 @@ public:
 		return sha256str(previousHash + txData + std::to_string(timestamp) + std::to_string(nonce));
 	}
 
+    /**
+     * @brief Calculates the hash of the block using a specified nonce
+     * @param nonce The nonce value to use in hash calculation
+     * @return SHA-256 hash of the block's contents
+     * @thread_safety Thread-safe, uses shared lock
+     */
 	std::string calculateHash(long nonce) const {
 		std::shared_lock lock(hashMutex);
 		std::string txData;
@@ -391,6 +529,11 @@ public:
 		return sha256str(previousHash + txData + std::to_string(timestamp) + std::to_string(nonce));
 	}
 
+    /**
+     * @brief Verifies that all transactions in the block are valid
+     * @return true if all transactions are valid, false otherwise
+     * @thread_safety Thread-safe, uses shared lock
+     */
 	bool hasValidTransactions() const {
 		std::shared_lock lock(hashMutex);
 		for (const auto& tx : transactions) {
@@ -401,22 +544,43 @@ public:
 		return true;
 	}
 
-
+    /**
+     * @brief Gets the current hash of the block
+     * @return The block's hash as a string
+     * @thread_safety Thread-safe, uses shared lock
+     */
 	std::string getHash() const {
 		std::shared_lock lock(hashMutex);
 		return hash;
 	}
 
+    /**
+     * @brief Gets the hash of the previous block
+     * @return The previous block's hash as a string
+     * @thread_safety Thread-safe, uses shared lock
+     */
 	std::string getPreviousHash() const {
 		std::shared_lock lock(hashMutex);
 		return previousHash;
 	}
 	
+    /**
+     * @brief Gets a copy of all transactions in the block
+     * @return Vector of transactions
+     * @thread_safety Thread-safe, uses shared lock
+     */
 	std::vector<Transaction> getTransactions() const {
 		std::shared_lock lock(hashMutex);
 		return transactions;
 	}
 
+    /**
+     * @brief Mines the block by finding a hash with the required number of leading zeros
+     * @param difficulty The number of leading zeros required in the hash
+     * @details Uses proof-of-work algorithm to find a nonce that produces a hash
+     *          with the specified number of leading zeros
+     * @thread_safety Thread-safe, uses atomic operations and proper locking
+     */
 	void mineBlock(int difficulty) {
     	std::string str(difficulty, '0');
     	std::atomic<long> local_nonce{0};  // Thread-safe nonce
@@ -433,17 +597,30 @@ public:
 	}
 
 private:
-	std::string previousHash;  // Can't be const due to vector copy operations
-	std::vector<Transaction> transactions;  // Can't be const due to vector copy operations
-	long timestamp;  // Can't be const due to copy operations
-	long nonce;  // Made atomic for thread safety during mining
-	mutable std::shared_mutex hashMutex;
-	std::string hash;
+    // Block properties
+	std::string previousHash;               // Hash of the previous block in the chain
+	std::vector<Transaction> transactions;  // List of transactions in this block
+	long timestamp;                         // Block creation timestamp
+	long nonce;                             // Proof-of-work nonce value
+	mutable std::shared_mutex hashMutex;    // Mutex for thread-safe access
+	std::string hash;                       // Current block's hash
 };
 
+/**
+ * @brief Represents the main blockchain data structure
+ * 
+ * The BlockChain class manages a chain of blocks, each containing multiple transactions.
+ * It handles mining new blocks, adding transactions, and maintaining the integrity of the chain.
+ * The blockchain uses proof-of-work consensus and supports mining rewards.
+ */
 class BlockChain
 {
 public:
+    /**
+     * @brief Constructs a new blockchain with genesis block
+     * @details Initializes the chain with a genesis block, sets mining difficulty
+     *          and mining reward values. Uses thread-safe initialization.
+     */
 	BlockChain() {
 		difficulty = 4;
 		miningReward = 100;
@@ -451,6 +628,13 @@ public:
 		chain.emplace_back(createGenesisBlock());
 	}
 
+    /**
+     * @brief Adds a single transaction to the pending transactions pool
+     * @param transaction The transaction to add
+     * @throws std::runtime_error if the transaction is invalid
+     * @thread_safety Thread-safe, uses unique lock
+     * @note Mining reward transactions (empty fromAddress) bypass validation
+     */
 	void addTransaction(const Transaction& transaction) {
 		if (!transaction.getFromAddress().empty() && !transaction.getToAddress().empty()) {
 			if (!transaction.isValid()) {
@@ -461,15 +645,25 @@ public:
 		pendingTransactions.push_back(transaction);
 	}
 
+    /**
+     * @brief Adds multiple transactions to the pending transactions pool
+     * @param transactions Vector of transactions to add
+     * @thread_safety Thread-safe, delegates to addTransaction
+     */
 	void addTransactions(const std::vector<Transaction>& transactions) {
-		//std::shared_lock lock(chainMutex);
 		for (const auto& tx : transactions) {
 			addTransaction(tx);
 		}
 	}
 
+    /**
+     * @brief Mines a new block with pending transactions and adds mining reward
+     * @param miningRewardAddress Address to receive the mining reward
+     * @details Creates a reward transaction, adds it to pending transactions,
+     *          creates a new block, mines it with proof-of-work, and adds it to the chain
+     * @thread_safety Thread-safe, uses appropriate locks for shared data
+     */
 	void minePendingTransactions(const std::string& miningRewardAddress) {
-
         Transaction rewardTx("", miningRewardAddress, miningReward);
 		{
 			std::unique_lock lock(chainMutex);
@@ -486,6 +680,14 @@ public:
 		}
 	}
 
+    /**
+     * @brief Calculates the balance of a specific address
+     * @param address The address to check
+     * @return The current balance considering all transactions in the chain
+     * @thread_safety Thread-safe, uses shared lock
+     * @details Iterates through all blocks and transactions to sum up
+     *          incoming and outgoing transactions for the address
+     */
 	double getBalanceOfAddress(const std::string& address) const {
 		std::shared_lock lock(chainMutex);
 		double balance = 0.0;
@@ -502,11 +704,23 @@ public:
 		return balance;
 	}
 
+    /**
+     * @brief Gets the most recently added block in the chain
+     * @return Copy of the latest block
+     * @thread_safety Thread-safe, uses shared lock
+     */
 	Block getLatestBlock() const {
 		std::shared_lock lock(chainMutex);
 		return chain.back();
 	}
 
+    /**
+     * @brief Validates the entire blockchain
+     * @return true if the chain is valid, false otherwise
+     * @thread_safety Thread-safe, uses shared lock
+     * @details Checks block hashes, previous block links,
+     *          and transaction validity in each block
+     */
 	bool isChainValid() const {
 		std::shared_lock lock(chainMutex);
 		for (size_t i = 1; i < chain.size(); ++i) {
@@ -529,15 +743,19 @@ public:
 	}
 
 private:
+    /**
+     * @brief Creates the genesis (first) block of the blockchain
+     * @return A new Block instance with no transactions
+     */
 	Block createGenesisBlock() {
 		return Block("01/01/2025", {});
 	}
-	std::vector<Block> chain;
-	std::vector<Transaction> pendingTransactions;
-	int difficulty;
-	long miningReward;
 
-	mutable std::shared_mutex chainMutex;
+    std::vector<Block> chain;                      // The main blockchain
+    std::vector<Transaction> pendingTransactions;  // Transactions waiting to be mined
+    int difficulty;                                // Current mining difficulty
+    long miningReward;                             // Reward for mining a block
+    mutable std::shared_mutex chainMutex;          // Mutex for thread-safe chain access
 };
 
 
