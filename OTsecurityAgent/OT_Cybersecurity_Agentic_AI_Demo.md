@@ -1,8 +1,8 @@
-OT Cybersecurity Agentic AI Demo Report
+# OT Cybersecurity Agentic AI Demo Report
 
 This document outlines the architecture and execution results of the OT Cybersecurity Demo. The solution simulates a converged IT/OT environment, captures live network traffic, and uses a multi-agent AI architecture to detect, triage, and analyze threats in real-time using the MITRE ATT&CK for ICS and OWASP frameworks.
 
-System Overview
+## System Overview
 
 The demo consists of four key components working in a pipeline:
 
@@ -24,7 +24,7 @@ Alerting: Displays context-aware alerts on the command prompt.
 
 ### 1. Mock PLC Server Output
 
-The server initializes and listens for Modbus TCP connections on all interfaces.
+The server initializes and listens for Modbus TCP connections on all interfaces. For this mock PLC server, pymodbus v3.6.4 was used.
 
 ```
 C:\Users\gokha\GitHub\GozhanProjects\OTsecurityAgent>python MockPLCserver.py
@@ -38,7 +38,7 @@ INFO:pymodbus.logging:Server listening.
 
 ### 2. OT Traffic Generator Output
 
-The generator injects packets into the loopback interface. Below are logs showing a generated Control Action (Modbus) and a Web Attack (HTTP).
+The generator injects packets into the loopback interface. Below are logs showing a generated Control Action (Modbus) and a Web Attack (HTTP). For this traffic generator, scapy v2.6.1 was used.
 
 ```
 C:\Users\gokha\GitHub\GozhanProjects\OTsecurityAgent>python OT_TrafficGenerator.py
@@ -77,7 +77,9 @@ C:\Users\gokha\GitHub\GozhanProjects\OTsecurityAgent>python OT_TrafficGenerator.
 
 ### 3. Agent Orchestrator Output (Analysis & Response)
 
-The C++ sniffer captures the traffic above and pipes it to the Orchestrator. The logs below demonstrate the Dual-Analysis capability, where the AI correctly identifies the nature of each attack.
+The C++ sniffer captures the traffic above and pipes it to the Orchestrator. The C++ snipper is built using Npcap SDK (https://npcap.com/#download). 
+
+The logs below demonstrate the Dual-Analysis capability, where the AI correctly identifies the nature of each attack.
 
 **Execution Command:**
 ```bash
