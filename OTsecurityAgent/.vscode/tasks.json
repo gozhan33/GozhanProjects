@@ -1,0 +1,27 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build BlockChainDemo (MSVC)",
+            "type": "shell",
+            "command": "cl.exe /nologo  /Zi /Od /EHsc /std:c++17 /MTd /I\"C:\\NpCap\\include\" WindowsOTsecIngestAgent.cpp /link /DEBUG /LIBPATH:\"C:\\NpCap\\lib\\x64\" wpcap.lib",
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "shell": {
+                    "executable": "cmd.exe",
+                    "args": ["/d", "/c"]
+                }
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true
+            },
+            "problemMatcher": "$msCompile"
+        }
+    ]
+}
