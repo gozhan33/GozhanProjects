@@ -89,7 +89,7 @@ def call_gemini_api(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 return None
     return None
 
-# --- NEW: Robust Log Block Parser (Replaces parse_event) ---
+# --- Robust Log Block Parser  ---
 
 def parse_log_block(block_lines: list) -> dict:
     """

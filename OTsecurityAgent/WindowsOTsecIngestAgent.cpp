@@ -99,11 +99,11 @@ public:
         // Compile filter to capture only relevant traffic (optimization)
         struct bpf_program fp;
         
-        // FIX: Add PORT_HMI_HTTP_SIM (8080) to the BPF filter
+        // Add Modbus, S7, HMI HTTP Sim, and DNP3 to the BPF filter
         std::string filter_exp = 
             "tcp port " + std::to_string(PORT_MODBUS) + 
             " or tcp port " + std::to_string(PORT_S7) + 
-            " or tcp port " + std::to_string(PORT_HMI_HTTP_SIM) + // <-- FIX APPLIED
+            " or tcp port " + std::to_string(PORT_HMI_HTTP_SIM) + 
             " or udp port " + std::to_string(PORT_DNP3) + 
             " or ether proto 0x8892";
         
@@ -193,7 +193,7 @@ private:
                 if (dst_port == PORT_MODBUS || src_port == PORT_MODBUS) {
                     handleModbusTCP(payload, payload_len, src_ip, dst_ip);
                 } 
-                // FIX: Add check for the simulated HTTP port (8080)
+                // Add check for the simulated HTTP port (8080)
                 else if (dst_port == PORT_HMI_HTTP_SIM || src_port == PORT_HMI_HTTP_SIM) {
                     handleTCPPayload(payload, payload_len, src_ip, dst_ip, 
                                      src_port, dst_port, "HTTP/HMI Simulation"); // <-- FIX APPLIED
@@ -236,7 +236,7 @@ private:
         sendToAgentBrain(evt);
     }
 
-    // NEW HANDLER: Generic TCP Payload handler for the attack traffic
+    // Generic TCP Payload handler for the attack traffic
     void handleTCPPayload(const u_char* payload, int len, const char* src_ip, const char* dst_ip, 
                           uint16_t src_port, uint16_t dst_port, const std::string& description) {
 

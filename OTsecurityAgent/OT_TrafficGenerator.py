@@ -7,7 +7,7 @@ from scapy.all import IP, TCP, send
 # Target IP for actual packet injection (must be 127.0.0.1 for sniffer visibility)
 INJECTION_IP = "127.0.0.1"
 MODBUS_INJECTION_PORT = 5020
-# --- FIX: Changing the HMI port from 80 to 8080 (a high port) to ensure visibility on loopback ---
+# --- Changing the HMI port from 80 to 8080 (a high port) to ensure visibility on loopback ---
 HMI_INJECTION_PORT = 8080 # Simulated HMI Web Server on a non-privileged port
 
 SLEEP_SECONDS = 1
@@ -18,7 +18,7 @@ EVENT_DELIMITER = "------------------------------------------------"
 APP_ID = "OT-AGENT-DEMO"
 MODBUS_LOG_PORT = 5020
 MODBUS_LOG_DST = f"{INJECTION_IP}:{MODBUS_LOG_PORT}"
-# --- FIX: Updating the HMI log destination to reflect the 8080 port ---
+# --- Updating the HMI log destination to reflect the 8080 port ---
 HMI_LOG_PORT = 8080
 HMI_LOG_DST = f"{INJECTION_IP}:{HMI_LOG_PORT}"
 
@@ -124,7 +124,7 @@ def generate_web_attack_traffic(loop_counter: int):
     http_payload = malicious_query.encode('ascii')
     log_payload_hex = bytes_to_hex_string(http_payload)
 
-    # --- Scapy Packet (Actual Injection - FIX: Use Port 8080) ---
+    # --- Scapy Packet (Actual Injection - Use Port 8080) ---
     src_port = 60210 + (loop_counter % 100) # Ephemeral port for injection
     ip_layer = IP(src=INJECTION_IP, dst=INJECTION_IP)
     # Target HMI_INJECTION_PORT (8080)
@@ -138,7 +138,7 @@ def generate_web_attack_traffic(loop_counter: int):
 def main():
     print("[*] Python Traffic Generator started.")
     print("[*] Packets sent via Layer 3 (send) to 127.0.0.1 for C++ sniffer.")
-    print(f"[*] HMI Traffic now targets Port {HMI_INJECTION_PORT} (high port) for visibility.")
+    print(f"[*] HMI Traffic targets Port {HMI_INJECTION_PORT} (high port) for visibility.")
     print(f"[*] Structured ground truth logs printed to stdout every {SLEEP_SECONDS}s.")
     print("-" * 50)
     

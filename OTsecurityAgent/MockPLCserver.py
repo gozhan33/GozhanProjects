@@ -2,9 +2,7 @@ import logging
 import sys
 
 # --- PyModbus v3.x Specific Imports ---
-# The previous multi-try-catch blocks failed because pymodbus's internal 
-# structure is inconsistent across minor versions. This version forces 
-# the most explicit, direct import path for v3.x contexts.
+# This version forces the most explicit, direct import path for v3.x contexts.
 
 try:
     # 1. Server Startup Function
@@ -21,7 +19,7 @@ except ImportError as e:
     print(f"FATAL ERROR: Import failed. The pymodbus library structure is incompatible.")
     print(f"Details: {e}")
     print("\n--- FIXING SUGGESTION ---")
-    print("Since you are on a new Python version (3.13), please try installing a known stable PyModbus release.")
+    print("Since you are on a new Python version (e.g., 3.13), please try installing a known stable PyModbus release.")
     print("1. Uninstall the current version:")
     print("   C:\\...\\python.exe -m pip uninstall pymodbus")
     print("2. Install a stable 3.x version (e.g., 3.6.4):")
@@ -42,7 +40,7 @@ def run_server():
     print("Press Ctrl+C to stop")
 
     # Define the memory map
-    # Note: 'single=True' means we only use one Slave ID (Unit ID 1)
+    # Note: 'single=True' means we only use one Unit ID (Unit ID 1)
     store = ModbusSlaveContext(
         di=ModbusSequentialDataBlock(0, [0]*100),
         co=ModbusSequentialDataBlock(0, [0]*100),
