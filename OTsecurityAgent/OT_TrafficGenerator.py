@@ -1,45 +1,33 @@
 import time
-import random
 import sys
-from scapy.all import IP, TCP, send 
+from abc import ABC, abstractmethod
+from scapy.all import IP, TCP, send
 
-# --- Configuration for Network Injection ---
-# Target IP for actual packet injection (must be 127.0.0.1 for sniffer visibility)
+# --- Configuration ---
 INJECTION_IP = "127.0.0.1"
 MODBUS_INJECTION_PORT = 5020
-# --- Changing the HMI port from 80 to 8080 (a high port) to ensure visibility on loopback ---
-HMI_INJECTION_PORT = 8080 # Simulated HMI Web Server on a non-privileged port
-
+HMI_INJECTION_PORT = 8080
 SLEEP_SECONDS = 1
-ATTACK_TRIGGER_INTERVAL = 10 # Trigger a special attack every 10 cycles
+ATTACK_TRIGGER_INTERVAL = 10
 
-# --- Configuration for Logging Output ---
+# --- Logging Configuration ---
 EVENT_DELIMITER = "------------------------------------------------"
 APP_ID = "OT-AGENT-DEMO"
 MODBUS_LOG_PORT = 5020
 MODBUS_LOG_DST = f"{INJECTION_IP}:{MODBUS_LOG_PORT}"
-# --- Updating the HMI log destination to reflect the 8080 port ---
 HMI_LOG_PORT = 8080
 HMI_LOG_DST = f"{INJECTION_IP}:{HMI_LOG_PORT}"
 
 # --- Utility Functions ---
-
 def bytes_to_hex_string(data: bytes) -> str:
-    """
-    Converts a bytes object to a hexadecimal string representation,
-    with spaces between bytes.
-    Example: b'\x01\x03' -> '01 03'
-    """
     return ' '.join(f'{b:02x}' for b in data)
 
-def log_event(protocol: str, type_name: str, src: str, dst: str, payload_hex: str):
+def log_to_stdout(protocol, type_name, src, dst, payload_hex):
     """
-    Generates a structured event block for logging to stdout, matching the
-    required format.
+    Standardized logging to stdout for the Orchestrator to consume.
+    
     """
     timestamp = int(time.time())
-
-    # Print to stdout, which will be piped to the Orchestrator
     print(EVENT_DELIMITER)
     print(f'"module": "INGESTION_AGENT",')
     print(f'"app_id": "{APP_ID}",')
@@ -48,137 +36,166 @@ def log_event(protocol: str, type_name: str, src: str, dst: str, payload_hex: st
     print(f'"type": "{type_name}",')
     print(f'"src": "{src}",')
     print(f'"dst": "{dst}",')
-    print(f'"payload_snippet": "{payload_hex}"')  # This is the hex string representation of the payload
+    print(f'"payload_snippet": "{payload_hex}"')
     print(EVENT_DELIMITER)
-    
-    # Crucial for immediate processing by the parent orchestrator process
     sys.stdout.flush()
 
-# --- Traffic Creation Scenarios ---
+# --- Base Class ---
 
-def generate_normal_traffic(loop_counter: int):
+class BaseTrafficGenerator(ABC):
     """
-    Simulates normal Modbus read traffic (FC 0x03).
-    
-    Returns: (scapy_packet, log_protocol, log_type, log_src, log_dst, log_payload_hex)
+    Abstract Base Class that handles the common logic for packet creation
+    and data formatting.
     """
-    
-    # --- Logging Parameters ---
-    type_name = "Read Holding Registers (0x03)"
-    log_src = "127.0.0.1:49152"
-    log_dst = MODBUS_LOG_DST
-    log_protocol = "Modbus/TCP"
+    def __init__(self, protocol, type_name, dst_port, dst_ip=INJECTION_IP):
+        self.protocol = protocol
+        self.type_name = type_name
+        self.dst_port = dst_port
+        self.dst_ip = dst_ip
 
-    # Modbus payload (01 03 00 00 00 0a)
-    modbus_pdu = bytes.fromhex("00010000000601030000000a")
-    log_payload_hex = bytes_to_hex_string(modbus_pdu)
-    
-    # --- Scapy Packet (Actual Injection) ---
-    ip_layer = IP(src=INJECTION_IP, dst=INJECTION_IP)
-    tcp_layer = TCP(sport=49152, dport=MODBUS_INJECTION_PORT, flags="PA", seq=loop_counter, ack=loop_counter)
-    scapy_packet = ip_layer / tcp_layer / modbus_pdu
-    
-    return scapy_packet, log_protocol, type_name, log_src, log_dst, log_payload_hex
+    def _build_scapy_packet(self, payload: bytes, src_port: int, seq: int):
+        """Constructs the IP/TCP layers wrapper."""
+        ip_layer = IP(src=self.dst_ip, dst=self.dst_ip)
+        tcp_layer = TCP(sport=src_port, dport=self.dst_port, flags="PA", seq=seq, ack=seq)
+        return ip_layer / tcp_layer / payload
 
-def generate_control_action_traffic(loop_counter: int):
-    """
-    Simulates a critical control action (Modbus write command).
-    """
-    
-    # --- Logging Parameters ---
-    type_name = "CONTROL ACTION: Force Single Coil (0x05)"
-    log_src = "127.0.0.1:49153"
-    log_dst = MODBUS_LOG_DST
-    log_protocol = "Modbus/TCP"
+    @abstractmethod
+    def generate(self, loop_counter: int):
+        """
+        Subclasses must implement this to return the specific payload and 
+        calculated source port.
+        """
+        pass
 
-    # Modbus Write Single Coil (0x05) payload
-    modbus_pdu = bytes.fromhex("00020000000601050005ff00")
-    log_payload_hex = bytes_to_hex_string(modbus_pdu)
-    
-    # --- Scapy Packet (Actual Injection) ---
-    ip_layer = IP(src=INJECTION_IP, dst=INJECTION_IP)
-    tcp_layer = TCP(sport=49153, dport=MODBUS_INJECTION_PORT, flags="PA", seq=loop_counter, ack=loop_counter)
-    scapy_packet = ip_layer / tcp_layer / modbus_pdu
-    
-    return scapy_packet, log_protocol, type_name, log_src, log_dst, log_payload_hex
+    def create_event(self, loop_counter: int, payload: bytes, src_port: int):
+        """
+        Helper method to finalize the packet and log data.
+        Returns: (scapy_packet, log_metadata_dict)
+        """
+        # 1. Create Scapy Packet
+        packet = self._build_scapy_packet(payload, src_port, loop_counter)
 
-def generate_web_attack_traffic(loop_counter: int):
-    """
-    Simulates a HTTP request containing a potential SQL injection payload.
-    """
-    
-    # --- Logging Parameters ---
-    type_name = "ATTACK: Potential SQL Injection"
-    log_protocol = "HTTP-HMI"
-    # Log the traffic targeting the new high port
-    log_src = f"{INJECTION_IP}:60210" # Use a dynamic source port based on injection
-    log_dst = HMI_LOG_DST # Use the high port 8080 in the log
+        # 2. Prepare Log Data
+        payload_hex = bytes_to_hex_string(payload)
+        src_str = f"{self.dst_ip}:{src_port}"
+        dst_str = f"{self.dst_ip}:{self.dst_port}"
 
-    # HTTP GET payload (simulated SQL Injection)
-    malicious_query = (
-        "GET /api/tags?id=105 OR 1=1 -- HTTP/1.1\r\n"
-        "Host: 192.168.1.10\r\n" # This is fine as it's part of the payload content
-        "User-Agent: Attacker-Tool\r\n"
-        "\r\n"
-    )
-    http_payload = malicious_query.encode('ascii')
-    log_payload_hex = bytes_to_hex_string(http_payload)
+        log_data = {
+            "protocol": self.protocol,
+            "type_name": self.type_name,
+            "src": src_str,
+            "dst": dst_str,
+            "payload_hex": payload_hex
+        }
 
-    # --- Scapy Packet (Actual Injection - Use Port 8080) ---
-    src_port = 60210 + (loop_counter % 100) # Ephemeral port for injection
-    ip_layer = IP(src=INJECTION_IP, dst=INJECTION_IP)
-    # Target HMI_INJECTION_PORT (8080)
-    tcp_layer = TCP(sport=src_port, dport=HMI_INJECTION_PORT, flags="PA", seq=loop_counter, ack=loop_counter)
-    scapy_packet = ip_layer / tcp_layer / http_payload
-    
-    return scapy_packet, log_protocol, type_name, f"{INJECTION_IP}:{src_port}", HMI_LOG_DST, log_payload_hex
+        return packet, log_data
 
-# --- Main Loop ---
+# --- Subclasses ---
+
+class ModbusReadGenerator(BaseTrafficGenerator):
+    def __init__(self):
+        super().__init__(protocol="Modbus/TCP", 
+                         type_name="Read Holding Registers (0x03)", 
+                         dst_port=MODBUS_INJECTION_PORT)
+
+    def generate(self, loop_counter: int):
+        # Fixed source port for normal traffic
+        src_port = 49152 
+        # Modbus PDU: Transaction ID 1, Protocol 0, Len 6, Unit 1, Func 3, Start 0, Count 10
+        payload = bytes.fromhex("00010000000601030000000a")
+        
+        return self.create_event(loop_counter, payload, src_port)
+
+
+class ModbusControlGenerator(BaseTrafficGenerator):
+    def __init__(self):
+        super().__init__(protocol="Modbus/TCP", 
+                         type_name="CONTROL ACTION: Force Single Coil (0x05)", 
+                         dst_port=MODBUS_INJECTION_PORT)
+
+    def generate(self, loop_counter: int):
+        # Different source port for control actions
+        src_port = 49153
+        # Modbus PDU: Func 0x05 (Write Coil)
+        payload = bytes.fromhex("00020000000601050005ff00")
+        
+        return self.create_event(loop_counter, payload, src_port)
+
+
+class HttpAttackGenerator(BaseTrafficGenerator):
+    def __init__(self):
+        super().__init__(protocol="HTTP-HMI", 
+                         type_name="ATTACK: Potential SQL Injection", 
+                         dst_port=HMI_INJECTION_PORT)
+
+    def generate(self, loop_counter: int):
+        # Dynamic source port calculation
+        src_port = 60210 + (loop_counter % 100)
+        
+        malicious_query = (
+            "GET /api/tags?id=105 OR 1=1 -- HTTP/1.1\r\n"
+            "Host: 192.168.1.10\r\n"
+            "User-Agent: Attacker-Tool\r\n"
+            "\r\n"
+        )
+        payload = malicious_query.encode('ascii')
+        
+        return self.create_event(loop_counter, payload, src_port)
+
+# --- Main Execution ---
 
 def main():
-    print("[*] Python Traffic Generator started.")
-    print("[*] Packets sent via Layer 3 (send) to 127.0.0.1 for C++ sniffer.")
-    print(f"[*] HMI Traffic targets Port {HMI_INJECTION_PORT} (high port) for visibility.")
-    print(f"[*] Structured ground truth logs printed to stdout every {SLEEP_SECONDS}s.")
-    print("-" * 50)
-    
+    print("[*] OOP Traffic Generator started.")
+    print(f"[*] Target IP: {INJECTION_IP}")
+    print(EVENT_DELIMITER)
+
+    # Instantiate Generators
+    gen_normal = ModbusReadGenerator()
+    gen_control = ModbusControlGenerator()
+    gen_attack = HttpAttackGenerator()
+
     loop_counter = 0
-    
+
     try:
         while True:
             loop_counter += 1
+            events_to_process = []
+
+            # --- Scheduling Logic ---
             
-            traffic_events = []
+            # 1. Always run normal traffic
+            events_to_process.append(gen_normal.generate(loop_counter))
 
-            # 1. Always generate normal traffic
-            traffic_events.append(generate_normal_traffic(loop_counter))
-
-            # 2. Introduce anomalies on a schedule
+            # 2. Run Control Action every 5 cycles
             if loop_counter % 5 == 0:
-                 traffic_events.append(generate_control_action_traffic(loop_counter))
-            
-            if loop_counter % ATTACK_TRIGGER_INTERVAL == 0:
-                traffic_events.append(generate_web_attack_traffic(loop_counter))
-                
-            # Process all prepared events for this cycle
-            for scapy_packet, log_protocol, log_type, log_src, log_dst, log_payload_hex in traffic_events:
-                try:
-                    # 1. Send the packet over the network
-                    send(scapy_packet, verbose=0) 
-                    
-                    # 2. Log the event in the structured format
-                    log_event(log_protocol, log_type, log_src, log_dst, log_payload_hex)
-                    
-                    time.sleep(0.05) # Small buffer between packets
+                events_to_process.append(gen_control.generate(loop_counter))
 
+            # 3. Run Web Attack every ATTACK_TRIGGER_INTERVAL cycles
+            if loop_counter % ATTACK_TRIGGER_INTERVAL == 0:
+                events_to_process.append(gen_attack.generate(loop_counter))
+
+            # --- Execution Loop ---
+            for packet, log_data in events_to_process:
+                try:
+                    # Send via Scapy
+                    send(packet, verbose=0)
+                    
+                    # Log via Helper
+                    log_to_stdout(
+                        log_data['protocol'],
+                        log_data['type_name'],
+                        log_data['src'],
+                        log_data['dst'],
+                        log_data['payload_hex']
+                    )
+                    time.sleep(0.05)
                 except Exception as e:
-                    print(f"\n[CRITICAL ERROR] Failed to send {log_type}. Generator stopping. Details: {e}")
-                    sys.exit(1)
-            
+                    print(f"[ERROR] Failed to send/log packet: {e}")
+
             time.sleep(SLEEP_SECONDS)
 
     except KeyboardInterrupt:
-        print("\n[*] Traffic generator gracefully stopped by user.")
+        print("\n[*] Generator stopped.")
         sys.exit(0)
 
 if __name__ == "__main__":
