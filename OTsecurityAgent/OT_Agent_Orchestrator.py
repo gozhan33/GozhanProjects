@@ -3,155 +3,263 @@ import json
 import time
 import random
 import requests
-import os 
-from typing import Dict, Any, Optional, List
+import os
+import argparse # NEW: For command-line arguments
+from typing import Dict, Any, Optional, List, Tuple
+from abc import ABC, abstractmethod
 
-# --- Configuration & Key Loading ---
+# --- Configuration & Constants ---
 
 EVENT_DELIMITER = "------------------------------------------------"
 MAX_RETRIES = 5
 BASE_DELAY = 1.0 # seconds
 
-def load_api_key() -> str:
+# LLM Configurations
+GEMINI_MODEL = "gemini-2.5-flash-preview-09-2025"
+OPENAI_MODEL = "gpt-4o"
+OPENAI_URL = "https://api.openai.com/v1/chat/completions"
+
+
+# --- Key Loading ---
+
+def load_api_keys() -> Dict[str, str]:
     """
-    Loads the Gemini API key from the specified path: 
-    %USERPROFILE%/KeyVault/config.json -> gemini.api_key
+    Loads API keys for both Gemini and OpenAI from the config file.
+    Returns a dictionary: {'gemini': 'key_value', 'openai': 'key_value'}
     """
-    # Use os.path.expanduser('~') for cross-platform compatibility with the home directory
     home_dir = os.path.expanduser('~')
     config_path = os.path.join(home_dir, 'KeyVault', 'config.json')
+    keys: Dict[str, str] = {}
 
-    print(f"[*] Attempting to load configuration from: {config_path}", file=sys.stderr)
+    print(f"[*] Attempting to load configurations from: {config_path}", file=sys.stderr)
 
     try:
         with open(config_path, 'r') as f:
             config = json.load(f)
-            # Safely access the nested API key
-            key = config.get('gemini', {}).get('api_key')
             
-            if key:
-                print("[*] Gemini API Key loaded successfully from config file.", file=sys.stderr)
-                return key
-            else:
-                print("[CRITICAL] 'gemini.api_key' key not found in the config file.", file=sys.stderr)
-                return ""
+            # 1. Load Gemini Key
+            keys['gemini'] = config.get('gemini', {}).get('api_key', "")
+            if keys['gemini']:
+                print("[*] Gemini API Key loaded.", file=sys.stderr)
+            
+            # 2. Load OpenAI Key
+            keys['openai'] = config.get('openai', {}).get('api_key', "")
+            if keys['openai']:
+                print("[*] OpenAI API Key loaded.", file=sys.stderr)
+            
+            if not keys['gemini'] and not keys['openai']:
+                 print("[CRITICAL] Neither 'gemini.api_key' nor 'openai.api_key' found in config file.", file=sys.stderr)
+            
+            return keys
     
     except FileNotFoundError:
         print(f"[CRITICAL] Configuration file not found at: {config_path}", file=sys.stderr)
-        return ""
+        return keys
     except json.JSONDecodeError:
         print(f"[CRITICAL] Failed to parse config.json. Check file format.", file=sys.stderr)
-        return ""
+        return keys
     except Exception as e:
         print(f"[CRITICAL] Unexpected error during key loading: {e}", file=sys.stderr)
-        return ""
+        return keys
 
-# Load the API Key once at startup
-API_KEY = load_api_key() 
-GEMINI_MODEL = "gemini-2.5-flash-preview-09-2025"
-API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={API_KEY}"
+# Load all keys once
+ALL_API_KEYS = load_api_keys()
 
-# --- Utility: Exponential Backoff (Gemini API Wrapper) ---
 
-def call_gemini_api(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Handles API retries using exponential backoff for the Gemini API call."""
-    # Check if API_KEY is set before proceeding
-    if not API_KEY:
-        print("[CRITICAL] API Key is missing. Cannot call Gemini API. Ensure the config file exists and contains 'gemini.api_key'.", file=sys.stderr)
-        return None
-        
-    headers = {
-        'Content-Type': 'application/json'
-    }
+# --- LLM Service Abstraction ---
+
+class LLMService(ABC):
+    """Abstract base class for all LLM API handlers (Gemini, OpenAI, etc.)."""
     
-    for attempt in range(MAX_RETRIES):
-        try:
-            response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
-            response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
-            return response.json()
-        except requests.exceptions.HTTPError as e:
-            # Handle specific API errors like 429 (Rate Limit) or the 403 (Forbidden)
-            if response.status_code == 429 and attempt < MAX_RETRIES - 1:
-                delay = BASE_DELAY * (2 ** attempt) + random.uniform(0, 1)
-                print(f"[ERROR] Rate limited (429) on attempt {attempt + 1}. Retrying in {delay:.2f}s.", file=sys.stderr)
-                time.sleep(delay)
-                continue
-            else:
-                print(f"[CRITICAL] HTTP Error after {attempt + 1} attempts or non-recoverable error ({response.status_code}): {e}", file=sys.stderr)
-                return None
-        except requests.exceptions.RequestException as e:
-            if attempt < MAX_RETRIES - 1:
-                delay = BASE_DELAY * (2 ** attempt) + random.uniform(0, 1)
-                print(f"[ERROR] API call failed on attempt {attempt + 1}. Retrying in {delay:.2f}s. Error: {e}", file=sys.stderr)
-                time.sleep(delay)
-            else:
-                print(f"[CRITICAL] API call failed after {MAX_RETRIES} attempts. Giving up. Error: {e}", file=sys.stderr)
-                return None
-    return None
-
-# --- Robust Log Block Parser  ---
-
-def parse_log_block(block_lines: list) -> dict:
-    """
-    Parses a block of log lines generated by the Traffic Generator
-    into a structured Python dictionary, with added debug output.
-
-    The expected format is lines like: '"key": "value",'.
-    """
-    event = {}
-    # print(f"\n[DEBUG PARSE] Starting to process {len(block_lines)} lines.", file=sys.stderr)
+    @abstractmethod
+    def call_api(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Handles the actual HTTP call, headers, and retry logic."""
+        pass
     
-    for line in block_lines:
-        line = line.strip()
-        if not line:
-            continue
-            
-        # print(f"[DEBUG PARSE] RAW Line: '{line}'", file=sys.stderr)
+    @abstractmethod
+    def build_payload(self, system_prompt: str, user_query: str, response_schema: Dict[str, Any]) -> Dict[str, Any]:
+        """Constructs the provider-specific API request body."""
+        pass
 
-        # Clean the line: remove leading/trailing quotes and the trailing comma
-        # We assume the line looks like: "key": "value",
-        line_cleaned_comma = line.rstrip(',')
-        # print(f"[DEBUG PARSE] Line after comma strip: '{line_cleaned_comma}'", file=sys.stderr)
+    @abstractmethod
+    def parse_response_content(self, response_json: Dict[str, Any]) -> str:
+        """Extracts the raw JSON string content from the provider's response format."""
+        pass
 
-        # Split on the first colon to separate key and value
-        try:
-            # Use split(':', 1) to safely handle values that might contain colons 
-            key_part, value_part = line_cleaned_comma.split(':', 1)
-            # print(f"[DEBUG PARSE] Key Part: '{key_part}', Value Part: '{value_part}'", file=sys.stderr)
-        except ValueError:
-            # Handle lines that don't conform
-            # print(f"[DEBUG PARSE] Warning: Skipping malformed line in block: {line}. No colon found.", file=sys.stderr)
-            continue
-            
-        # Clean up the key and value: remove surrounding quotes and extra whitespace
-        # Key cleanup: remove surrounding quotes if present
-        key = key_part.strip().strip('"')
-        
-        # Value cleanup: remove surrounding quotes if present
-        value = value_part.strip().strip('"')
-        
-        # print(f"[DEBUG PARSE] Final Key: '{key}', Final Value: '{value}'", file=sys.stderr)
 
-        # Attempt to cast timestamp to integer if present, otherwise store as string
-        if key == 'timestamp':
+# --- Concrete Service Implementations ---
+
+class GeminiLLMService(LLMService):
+    """Concrete implementation for the Gemini API."""
+
+    def __init__(self, api_key: str):
+        if not api_key:
+            raise ValueError("Gemini API key is required.")
+        self.api_key = api_key
+        self.api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={self.api_key}"
+
+    def build_payload(self, system_prompt: str, user_query: str, response_schema: Dict[str, Any]) -> Dict[str, Any]:
+        """Builds the Gemini-specific JSON payload."""
+        return {
+            "contents": [{"parts": [{"text": user_query}]}],
+            "systemInstruction": {"parts": [{"text": system_prompt}]},
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "responseSchema": response_schema
+            }
+        }
+    
+    def parse_response_content(self, response_json: Dict[str, Any]) -> str:
+        """Extracts content from Gemini response."""
+        return response_json['candidates'][0]['content']['parts'][0]['text']
+
+    def call_api(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Handles API retries for Gemini."""
+        headers = {'Content-Type': 'application/json'}
+        for attempt in range(MAX_RETRIES):
             try:
-                event[key] = int(value)
-            except ValueError:
-                event[key] = value # Keep as string if conversion fails
-        else:
-            event[key] = value
-            
-    # Check for a mandatory field to confirm successful parsing
-    if 'module' in event and event['module'] == 'INGESTION_AGENT':
-        #print(f"[DEBUG PARSE] SUCCESS. Parsed Event: {json.dumps(event)}", file=sys.stderr)
-        return event
+                response = requests.post(self.api_url, headers=headers, json=payload, timeout=30)
+                response.raise_for_status() 
+                return response.json()
+            except requests.exceptions.HTTPError as e:
+                if response.status_code == 429 and attempt < MAX_RETRIES - 1:
+                    delay = BASE_DELAY * (2 ** attempt) + random.uniform(0, 1)
+                    print(f"[ERROR] Gemini Rate limited (429) on attempt {attempt + 1}. Retrying in {delay:.2f}s.", file=sys.stderr)
+                    time.sleep(delay)
+                    continue
+                else:
+                    print(f"[CRITICAL] Gemini HTTP Error after {attempt + 1} attempts or non-recoverable error ({response.status_code}): {e}", file=sys.stderr)
+                    return None
+            except requests.exceptions.RequestException as e:
+                if attempt < MAX_RETRIES - 1:
+                    delay = BASE_DELAY * (2 ** attempt) + random.uniform(0, 1)
+                    print(f"[ERROR] Gemini call failed on attempt {attempt + 1}. Retrying in {delay:.2f}s. Error: {e}", file=sys.stderr)
+                    time.sleep(delay)
+                else:
+                    print(f"[CRITICAL] Gemini call failed after {MAX_RETRIES} attempts. Giving up. Error: {e}", file=sys.stderr)
+                    return None
+        return None
 
-    print(f"[DEBUG PARSE] FAILURE. Required field 'module' missing or wrong value. Final dict keys: {list(event.keys())}", file=sys.stderr)
-    return {}
+# NEW CLASS IMPLEMENTATION
+class OpenAILLMService(LLMService):
+    """Concrete implementation for the OpenAI API."""
+
+    def __init__(self, api_key: str):
+        if not api_key:
+            raise ValueError("OpenAI API key is required.")
+        self.api_key = api_key
+        self.api_url = OPENAI_URL
+        self.model = OPENAI_MODEL
+
+    def build_payload(self, system_prompt: str, user_query: str, response_schema: Dict[str, Any]) -> Dict[str, Any]:
+        """Builds the OpenAI-specific JSON payload, using response_format for structured output."""
+        return {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_query}
+            ],
+            # OpenAI structured output
+            "response_format": {"type": "json_object"}
+        }
+
+    def parse_response_content(self, response_json: Dict[str, Any]) -> str:
+        """Extracts content from OpenAI response."""
+        return response_json['choices'][0]['message']['content']
+
+    def call_api(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Handles API retries for OpenAI."""
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {self.api_key}'
+        }
+        
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = requests.post(self.api_url, headers=headers, json=payload, timeout=30)
+                response.raise_for_status()
+                return response.json()
+            except requests.exceptions.HTTPError as e:
+                if response.status_code == 429 and attempt < MAX_RETRIES - 1:
+                    delay = BASE_DELAY * (2 ** attempt) + random.uniform(0, 1)
+                    print(f"[ERROR] OpenAI Rate limited (429) on attempt {attempt + 1}. Retrying in {delay:.2f}s.", file=sys.stderr)
+                    time.sleep(delay)
+                    continue
+                else:
+                    print(f"[CRITICAL] OpenAI HTTP Error after {attempt + 1} attempts or non-recoverable error ({response.status_code}): {e}", file=sys.stderr)
+                    return None
+            except requests.exceptions.RequestException as e:
+                if attempt < MAX_RETRIES - 1:
+                    delay = BASE_DELAY * (2 ** attempt) + random.uniform(0, 1)
+                    print(f"[ERROR] OpenAI call failed on attempt {attempt + 1}. Retrying in {delay:.2f}s. Error: {e}", file=sys.stderr)
+                    time.sleep(delay)
+                else:
+                    print(f"[CRITICAL] OpenAI call failed after {MAX_RETRIES} attempts. Giving up. Error: {e}", file=sys.stderr)
+                    return None
+        return None
+
+# --- LLMSecurityAgent Base Class (Updated to use parse_response_content) ---
+
+class LLMSecurityAgent(ABC):
+    """
+    Base class for all security expert agents (MITRE, OWASP, etc.).
+    It delegates API communication to a pluggable LLMService instance.
+    """
+    
+    SYSTEM_PROMPT: str = "" 
+    RESPONSE_SCHEMA: Dict[str, Any] = {}
+    
+    def __init__(self, llm_service: LLMService):
+        self.llm_service = llm_service
+        self.agent_name = self.__class__.__name__
+        print(f"[*] {self.agent_name} initialized and linked to {self.llm_service.__class__.__name__}.")
+
+    def perform_analysis(self, event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        
+        print(f"[*] Calling LLM Service for {self.agent_name} analysis...")
+
+        user_query = self._build_user_query(event)
+        
+        # 1. Build the provider-specific payload
+        payload = self.llm_service.build_payload(
+            self.SYSTEM_PROMPT, 
+            user_query, 
+            self.RESPONSE_SCHEMA
+        )
+
+        # 2. Call the provider's API
+        response_json = self.llm_service.call_api(payload)
+        
+        if response_json:
+            try:
+                # Use the service's specific method to extract the JSON string content
+                json_string = self.llm_service.parse_response_content(response_json)
+                # Parse the JSON string into a Python dictionary
+                return json.loads(json_string)
+            except (json.JSONDecodeError, KeyError) as e:
+                print(f"[LLM PARSE ERROR] {self.agent_name} failed to parse JSON response: {e}", file=sys.stderr)
+                # print(f"[DEBUG RAW RESPONSE] {response_json}", file=sys.stderr)
+                return None
+        return None
+
+    def _build_user_query(self, event: Dict[str, Any]) -> str:
+        # ... (Implementation remains the same)
+        return (
+            f"Analyze the following high-priority anomaly event:\n"
+            f"**Anomaly Reason:** {event['anomaly_reason']}\n"
+            f"**Protocol:** {event.get('protocol', 'Unknown')}\n"
+            f"**Action/Type:** {event.get('type', 'Unknown')}\n"
+            f"**Source IP:** {event.get('src', 'N/A')} -> **Destination IP:** {event.get('dst', 'N/A')}\n"
+            f"**Payload Snippet (Hex):** {event.get('payload_snippet', 'No Data')}\n\n"
+            f"Based on this data, provide your specific security analysis."
+        )
 
 
-# --- Agent 1: Triage & Anomaly Agent (The Filter) ---
+# --- MITREAgent and OWASPAgent (Expertise remains the same) ---
+# ... (MITREAgent and OWASPAgent definitions remain the same, as they inherit all execution logic)
 
+# [Code for TriageAgent, parse_log_block, display_analysis, consume_ingestion_stream remains the same]
+# --- TriageAgent and Utility Functions (Unchanged) ---
 class TriageAgent:
     """
     Agent 1: Establishes a basic baseline and filters events before passing 
@@ -193,13 +301,45 @@ class TriageAgent:
         event["anomaly_reason"] = "Non-Baseline/Uncategorized Traffic"
         return True
 
-# --- Agent 2: MITRE ATT&CK for ICS Agent (The Industrial Reasoner) ---
+def parse_log_block(block_lines: list) -> dict:
+    """
+    Parses a block of log lines generated by the Traffic Generator
+    into a structured Python dictionary, with added debug output.
+    """
+    event = {}
+    
+    for line in block_lines:
+        line = line.strip()
+        if not line:
+            continue
+            
+        line_cleaned_comma = line.rstrip(',')
 
-class MITREAgent:
-    """
-    Agent 2: Uses Gemini to perform contextual reasoning and map network anomalies
-    to MITRE ATT&CK for ICS techniques (T-numbers).
-    """
+        try:
+            key_part, value_part = line_cleaned_comma.split(':', 1)
+        except ValueError:
+            continue
+            
+        key = key_part.strip().strip('"')
+        value = value_part.strip().strip('"')
+        
+        if key == 'timestamp':
+            try:
+                event[key] = int(value)
+            except ValueError:
+                event[key] = value
+        else:
+            event[key] = value
+            
+    if 'module' in event and event['module'] == 'INGESTION_AGENT':
+        return event
+
+    print(f"[DEBUG PARSE] FAILURE. Required field 'module' missing or wrong value. Final dict keys: {list(event.keys())}", file=sys.stderr)
+    return {}
+
+class MITREAgent(LLMSecurityAgent):
+    """Agent 2: Maps anomalies to MITRE ATT&CK for ICS."""
+    
     SYSTEM_PROMPT = (
         "You are an expert industrial control systems (ICS) threat intelligence analyst. "
         "Your task is to analyze a raw network anomaly detected by an OT agent and map it "
@@ -215,66 +355,20 @@ class MITREAgent:
         '}'
     )
 
-    def __init__(self):
-        print("[*] MITREAgent initialized. Ready to perform LLM-based reasoning.")
+    RESPONSE_SCHEMA = {
+        "type": "OBJECT",
+        "properties": {
+            "mitre_technique": {"type": "STRING", "description": "The specific T-number, e.g., T0807."},
+            "technique_name": {"type": "STRING", "description": "The formal name of the technique."},
+            "plausible_phase": {"type": "STRING", "description": "The stage of the attack lifecycle."},
+            "analysis_summary": {"type": "STRING", "description": "A brief explanation of why this technique is plausible."}
+        },
+        "required": ["mitre_technique", "technique_name", "plausible_phase", "analysis_summary"]
+    }
 
-    def perform_analysis(self, event: Dict[str, Any]) -> Optional[Dict[str, str]]:
-        """
-        Calls the Gemini API to analyze the event and return a structured MITRE mapping.
-        """
-        print(f"[*] Calling Gemini for MITRE analysis...")
-        
-        # Craft the user query with the raw event data
-        user_query = (
-            f"Analyze the following high-priority ICS anomaly event:\n"
-            f"**Anomaly Reason:** {event['anomaly_reason']}\n"
-            f"**Protocol:** {event.get('protocol', 'Unknown')}\n"
-            f"**Action/Type:** {event.get('type', 'Unknown')}\n"
-            f"**Source IP:** {event.get('src', 'N/A')} -> **Destination IP:** {event.get('dst', 'N/A')}\n"
-            f"**Payload Snippet (Hex):** {event.get('payload_snippet', 'No Data')}\n\n"
-            f"Based on this data, identify the single most likely MITRE ATT&CK for ICS Technique (T-number)."
-        )
-
-        payload = {
-            "contents": [{"parts": [{"text": user_query}]}],
-            "systemInstruction": {"parts": [{"text": self.SYSTEM_PROMPT}]},
-            # Request a structured JSON response
-            "generationConfig": {
-                "responseMimeType": "application/json",
-                "responseSchema": {
-                    "type": "OBJECT",
-                    "properties": {
-                        "mitre_technique": {"type": "STRING", "description": "The specific T-number, e.g., T0807."},
-                        "technique_name": {"type": "STRING", "description": "The formal name of the technique."},
-                        "plausible_phase": {"type": "STRING", "description": "The stage of the attack lifecycle."},
-                        "analysis_summary": {"type": "STRING", "description": "A brief explanation of why this technique is plausible."}
-                    },
-                    "required": ["mitre_technique", "technique_name", "plausible_phase", "analysis_summary"]
-                }
-            }
-        }
-        
-        response_json = call_gemini_api(payload)
-        
-        if response_json and response_json.get('candidates'):
-            try:
-                # The response text should be the JSON string
-                json_string = response_json['candidates'][0]['content']['parts'][0]['text']
-                # Parse the JSON string into a Python dictionary
-                parsed_analysis = json.loads(json_string)
-                return parsed_analysis
-            except (json.JSONDecodeError, KeyError) as e:
-                print(f"[LLM PARSE ERROR] MITRE failed to parse JSON response: {e}", file=sys.stderr)
-                return None
-        return None
-
-# --- Agent 3: OWASP Agent (The IT/Web Expert) ---
-
-class OWASPAgent:
-    """
-    Agent 3: Uses Gemini to perform contextual reasoning and map network anomalies
-    to relevant OWASP Top 10 categories, focusing on the IT/OT convergence layer.
-    """
+class OWASPAgent(LLMSecurityAgent):
+    """Agent 3: Maps web-based anomalies to OWASP Top 10."""
+    
     SYSTEM_PROMPT = (
         "You are an expert web application security analyst focused on IT/OT convergence points (like HMIs and IIoT gateways). "
         "Your task is to analyze a raw network anomaly event. Determine if the payload or context suggests an attack "
@@ -289,57 +383,15 @@ class OWASPAgent:
         '}'
     )
 
-    def __init__(self):
-        print("[*] OWASPAgent initialized. Ready to perform LLM-based web security reasoning.")
-
-    def perform_analysis(self, event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """
-        Calls the Gemini API to analyze the event and return a structured OWASP mapping.
-        """
-        print(f"[*] Calling Gemini for OWASP analysis...")
-        
-        user_query = (
-            f"Analyze the following high-priority ICS anomaly event:\n"
-            f"**Anomaly Reason:** {event['anomaly_reason']}\n"
-            f"**Protocol:** {event.get('protocol', 'Unknown')}\n"
-            f"**Action/Type:** {event.get('type', 'Unknown')}\n"
-            f"**Source IP:** {event.get('src', 'N/A')} -> **Destination IP:** {event.get('dst', 'N/A')}\n"
-            f"**Payload Snippet (Hex):** {event.get('payload_snippet', 'No Data')}\n\n"
-            f"Based on the protocol and payload, is this activity related to a web application vulnerability (OWASP)? Pay close attention to the raw hex payload for signs of injection (e.g., unusual ASCII strings)."
-        )
-
-        payload = {
-            "contents": [{"parts": [{"text": user_query}]}],
-            "systemInstruction": {"parts": [{"text": self.SYSTEM_PROMPT}]},
-            # Request a structured JSON response
-            "generationConfig": {
-                "responseMimeType": "application/json",
-                "responseSchema": {
-                    "type": "OBJECT",
-                    "properties": {
-                        "owasp_category": {"type": "STRING", "description": "The relevant OWASP Top 10 category, e.g., A03:2021 - Injection. If non-applicable, use 'A00: None'."},
-                        "is_web_attack": {"type": "BOOLEAN", "description": "True if this event is highly likely a web/IT-based attack, False otherwise."},
-                        "analysis_summary": {"type": "STRING", "description": "A brief explanation of the web security relevance or lack thereof."}
-                    },
-                    "required": ["owasp_category", "is_web_attack", "analysis_summary"]
-                }
-            }
-        }
-        
-        response_json = call_gemini_api(payload)
-        
-        if response_json and response_json.get('candidates'):
-            try:
-                json_string = response_json['candidates'][0]['content']['parts'][0]['text']
-                parsed_analysis = json.loads(json_string)
-                return parsed_analysis
-            except (json.JSONDecodeError, KeyError) as e:
-                print(f"[LLM PARSE ERROR] OWASP failed to parse JSON response: {e}", file=sys.stderr)
-                return None
-        return None
-
-
-# --- Central Orchestrator Functions ---
+    RESPONSE_SCHEMA = {
+        "type": "OBJECT",
+        "properties": {
+            "owasp_category": {"type": "STRING", "description": "The relevant OWASP Top 10 category, e.g., A03:2021 - Injection. If non-applicable, use 'A00: None'."},
+            "is_web_attack": {"type": "BOOLEAN", "description": "True if this event is highly likely a web/IT-based attack, False otherwise."},
+            "analysis_summary": {"type": "STRING", "description": "A brief explanation of the web security relevance or lack thereof."}
+        },
+        "required": ["owasp_category", "is_web_attack", "analysis_summary"]
+    }
 
 def display_analysis(event: Dict[str, Any], mitre_report: Dict[str, str], owasp_report: Dict[str, Any]):
     """Formats and prints the final report to stdout for the user/next step."""
@@ -366,8 +418,7 @@ def display_analysis(event: Dict[str, Any], mitre_report: Dict[str, str], owasp_
     print(f"|   SUMMARY: {owasp_report.get('analysis_summary', 'N/A')}")
     print("="*80 + "\n")
 
-
-def consume_ingestion_stream(triage_agent: TriageAgent, mitre_agent: MITREAgent, owasp_agent: OWASPAgent):
+def consume_ingestion_stream(triage_agent: TriageAgent, mitre_agent: LLMSecurityAgent, owasp_agent: LLMSecurityAgent):
     """
     The main loop that reads event blocks from stdin (piped from the Traffic Generator).
     """
@@ -379,8 +430,6 @@ def consume_ingestion_stream(triage_agent: TriageAgent, mitre_agent: MITREAgent,
         line = line.strip()
 
         if line == EVENT_DELIMITER:
-            # Delimiter found: process the complete event block
-            # print(f"[*] Delimiter found. Processing block of {len(event_lines)} lines.", file=sys.stderr)
             parsed_event = parse_log_block(event_lines)
             
             if parsed_event:
@@ -400,22 +449,59 @@ def consume_ingestion_stream(triage_agent: TriageAgent, mitre_agent: MITREAgent,
                         print("[!!!] One or both Expert Agents failed to generate a report.", file=sys.stderr)
                         
             else:
-                 print("[!!!] Block skipped due to parsing failure or missing required fields.", file=sys.stderr)
-                 
+                print("[!!!] Block skipped due to parsing failure or missing required fields.", file=sys.stderr)
+                
             # Reset buffer for the next event
             event_lines = []
         else:
             # Accumulate lines into the current event list
             event_lines.append(line)
-            
+
+# --- Argument Parsing ---
+
+def get_command_line_args():
+    """Parses command line arguments to select the LLM provider."""
+    parser = argparse.ArgumentParser(description="LLM Security Agent Orchestrator.")
+    parser.add_argument(
+        "--llm", 
+        type=str, 
+        default="gemini", 
+        choices=["gemini", "openai"],
+        help="The LLM provider to use for analysis (default: gemini)."
+    )
+    return parser.parse_args()
+
+
+# --- Main Execution ---
+
 def main():
-    triage_agent = TriageAgent()
-    mitre_agent = MITREAgent()
-    owasp_agent = OWASPAgent() # Initialize the new agent
+    # 1. Get arguments
+    args = get_command_line_args()
+    selected_llm = args.llm
     
-    # Check if the API key was successfully loaded
-    if not API_KEY:
-        print("[WARNING] LLM-based analysis is DISABLED because API_KEY could not be loaded.", file=sys.stderr)
+    # 2. Check key and select service implementation
+    llm_service: Optional[LLMService] = None
+    api_key = ALL_API_KEYS.get(selected_llm)
+
+    if not api_key:
+        print(f"[FATAL] API Key for '{selected_llm}' not found or loaded. Aborting.", file=sys.stderr)
+        sys.exit(1)
+
+    if selected_llm == "gemini":
+        llm_service = GeminiLLMService(api_key=api_key)
+    elif selected_llm == "openai":
+        llm_service = OpenAILLMService(api_key=api_key)
+
+    if llm_service is None:
+        print(f"[FATAL] Failed to initialize LLM service for '{selected_llm}'. Aborting.", file=sys.stderr)
+        sys.exit(1)
+        
+    # 3. Initialize Agents by injecting the selected LLM service
+    triage_agent = TriageAgent()
+    mitre_agent = MITREAgent(llm_service=llm_service)
+    owasp_agent = OWASPAgent(llm_service=llm_service) 
+    
+    print(f"[*] Orchestrator running with {selected_llm.upper()} ({llm_service.__class__.__name__}) as the backend.", file=sys.stderr)
 
     consume_ingestion_stream(triage_agent, mitre_agent, owasp_agent)
 
