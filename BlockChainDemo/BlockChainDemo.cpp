@@ -668,6 +668,7 @@ public:
 		{
 			std::unique_lock lock(chainMutex);
     		pendingTransactions.push_back(rewardTx);
+            std::cout << "Added $" << miningReward << " mining rewards to: " << miningRewardAddress << std::endl;
 		}
         
         Block newBlock(getLatestBlock().getHash(), pendingTransactions);
