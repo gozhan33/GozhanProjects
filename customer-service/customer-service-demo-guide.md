@@ -247,7 +247,7 @@ While running steps 2–8, switch to the **RDS Monitoring** tab in the AWS Conso
 
 ---
 
-## Talking Points for a LabKey / AWS-shop Audience
+## Talking Points for a AWS-shop Audience
 
 - **"I used RDS instead of running Postgres on EC2"** — shows awareness of managed services, backups, and operational overhead reduction
 - **"RDS is not publicly accessible"** — shows you didn't take the easy/insecure path
