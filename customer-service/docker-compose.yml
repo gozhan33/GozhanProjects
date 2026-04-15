@@ -1,0 +1,77 @@
+# Docker Compose configuration for Customer Service microservice stack
+# Defines PostgreSQL database and Crow backend API service
+# This is purely for local development on your laptop/WSL. It spins up two containers:
+# 1) A local PostgreSQL container (replaces RDS)
+# 2) The Crow backend container (replaces EC2)
+# Run: docker-compose up
+
+version: "3.9"   # Compose file format version
+
+services:
+  # ────────────────────────────────────────────────────────────────────────────
+  # PostgreSQL Database Service
+  # ────────────────────────────────────────────────────────────────────────────
+  db:
+    image: postgres:15-alpine  # Alpine variant for smaller image size
+    
+    # Database initialization environment variables
+    environment:
+      # Name of the database to create
+      POSTGRES_DB:       customerdb
+      # Main administrative user
+      POSTGRES_USER:     csadmin
+      # Password for admin user (for local development only; use secrets in production)
+      POSTGRES_PASSWORD: localpassword
+    
+    # Expose PostgreSQL on host machine for direct access (optional)
+    ports:
+      - "5432:5432"
+    
+    # Volume mounts
+    volumes:
+      # Named volume for persistent database data across container restarts
+      - pgdata:/var/lib/postgresql/data
+      # SQL schema initialization script (runs automatically on first startup)
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    
+    # Health check: verifies database is ready to accept connections
+    healthcheck:
+      # PostgreSQL connection check using pg_isready
+      test: ["CMD-SHELL", "pg_isready -U csadmin -d customerdb"]
+      interval: 5s        # Check every 5 seconds
+      retries: 5          # Fail after 5 consecutive failures
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Crow Backend API Service
+  # ────────────────────────────────────────────────────────────────────────────
+  backend:
+    # Build image from ./backend/Dockerfile
+    build: ./backend
+    
+    # Expose API port on host machine
+    ports:
+      - "8080:8080"
+    
+    # Database connection environment variables
+    environment:
+      DB_HOST:    db              # Service name (Docker DNS resolves to container IP)
+      DB_PORT:    5432            # PostgreSQL default port
+      DB_USER:    csadmin         # Must match POSTGRES_USER from db service
+      DB_PASS:    localpassword   # Must match POSTGRES_PASSWORD from db service
+      DB_NAME:    customerdb      # Must match POSTGRES_DB from db service
+      DB_SSLMODE: disable         # No SSL for local development
+      PORT:       8080            # HTTP server port
+    
+    # Service startup ordering: wait for database health check to pass
+    depends_on:
+      db:
+        # Start backend only after database is healthy (not just running)
+        condition: service_healthy
+
+# ────────────────────────────────────────────────────────────────────────────
+# Named Volumes
+# ────────────────────────────────────────────────────────────────────────────
+volumes:
+  # PostgreSQL data volume: persists database between container restarts
+  # Location: /var/lib/docker/volumes/customer-service_pgdata/_data
+  pgdata:
