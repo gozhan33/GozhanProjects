@@ -15,8 +15,8 @@ MAX_RETRIES = 5
 BASE_DELAY = 1.0 # seconds
 
 # LLM Configurations
-GEMINI_MODEL = "gemini-2.5-flash-preview-09-2025"
-OPENAI_MODEL = "gpt-4o"
+GEMINI_MODEL = "gemini-2.5-flash"
+OPENAI_MODEL = "gpt-4o-mini"
 OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 
 

@@ -33,9 +33,10 @@ except ImportError as e:
 
 
 # Configure logging
-logging.basicConfig()
-log = logging.getLogger()
-log.setLevel(logging.INFO)
+logging.basicConfig(
+    format='%(asctime)s %(levelname)-8s %(name)-15s %(message)s',
+    level=logging.DEBUG,
+)
 
 def get_command_line_args():
     """Parse command line arguments for flexibility."""
